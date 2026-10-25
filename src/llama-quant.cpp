@@ -420,9 +420,103 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
     return return_type;
 }
 
+//
+// K_P mixes
+//
+
+static bool llama_ftype_is_kp(llama_ftype ftype) {
+    return ftype >= LLAMA_FTYPE_MOSTLY_Q2_K_P && ftype <= LLAMA_FTYPE_MOSTLY_Q8_K_P;
+}
+
+// the standard file type recorded in the GGUF for a K_P mix
+static llama_ftype llama_ftype_kp_file_type(llama_ftype ftype) {
+    switch (ftype) {
+        case LLAMA_FTYPE_MOSTLY_Q2_K_P: return LLAMA_FTYPE_MOSTLY_Q2_K;
+        case LLAMA_FTYPE_MOSTLY_Q3_K_P: return LLAMA_FTYPE_MOSTLY_Q3_K_M;
+        case LLAMA_FTYPE_MOSTLY_Q4_K_P: return LLAMA_FTYPE_MOSTLY_Q4_K_M;
+        case LLAMA_FTYPE_MOSTLY_Q5_K_P: return LLAMA_FTYPE_MOSTLY_Q5_K_M;
+        case LLAMA_FTYPE_MOSTLY_Q6_K_P: return LLAMA_FTYPE_MOSTLY_Q6_K;
+        case LLAMA_FTYPE_MOSTLY_Q8_K_P: return LLAMA_FTYPE_MOSTLY_Q8_0;
+        default:                        return ftype;
+    }
+}
+
+// tensor types of a K_P mix by tensor role
+// the levels are sized to 9.21, 7.59, 5.92, 5.25, 3.93 and 3.12 bpw on Qwen3.5/3.6 27B (with the MTP block)
+struct llama_kp_recipe {
+    ggml_type base;    // any other quantized tensor
+    ggml_type attn;    // attn_q, attn_k, attn_output, attn_kv_b
+    ggml_type qkv;     // attn_qkv
+    ggml_type z;       // attn_gate (gated delta net output gate)
+    ggml_type sout;    // ssm_out
+    ggml_type v;       // attn_v
+    ggml_type proj;    // nextn.eh_proj (MTP input projection)
+    ggml_type up;
+    ggml_type gate;
+    ggml_type down;
+    ggml_type out;     // output, nextn.shared_head_head
+    ggml_type embd;    // token_embd, nextn.embed_tokens
+    ggml_type small;   // ssm_alpha, ssm_beta
+};
+
+static llama_kp_recipe llama_kp_get_recipe(llama_ftype ftype) {
+    //                                    base               attn               qkv                z                  sout               v                  proj               up                  gate                down               out                embd               small
+    switch (ftype) {
+        case LLAMA_FTYPE_MOSTLY_Q2_K_P: return { GGML_TYPE_Q2_K, GGML_TYPE_Q3_K, GGML_TYPE_Q3_K, GGML_TYPE_Q3_K, GGML_TYPE_Q3_K, GGML_TYPE_Q5_K, GGML_TYPE_Q5_K, GGML_TYPE_IQ2_S,  GGML_TYPE_IQ2_XS, GGML_TYPE_Q3_K, GGML_TYPE_Q5_K, GGML_TYPE_Q3_K, GGML_TYPE_Q4_K };
+        case LLAMA_FTYPE_MOSTLY_Q3_K_P: return { GGML_TYPE_Q3_K, GGML_TYPE_Q4_K, GGML_TYPE_Q4_K, GGML_TYPE_Q4_K, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ3_S,  GGML_TYPE_IQ3_S,  GGML_TYPE_IQ3_S, GGML_TYPE_Q6_K, GGML_TYPE_Q4_K, GGML_TYPE_Q4_K };
+        case LLAMA_FTYPE_MOSTLY_Q4_K_P: return { GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q5_K, GGML_TYPE_Q5_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_Q6_K, GGML_TYPE_Q5_K,   GGML_TYPE_IQ4_XS, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_Q4_K, GGML_TYPE_Q4_K };
+        case LLAMA_FTYPE_MOSTLY_Q5_K_P: return { GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_Q6_K, GGML_TYPE_Q6_K, GGML_TYPE_Q6_K, GGML_TYPE_Q5_K,   GGML_TYPE_Q5_K,   GGML_TYPE_Q6_K, GGML_TYPE_Q6_K, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K };
+        case LLAMA_FTYPE_MOSTLY_Q6_K_P: return { GGML_TYPE_Q6_K, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q6_K,   GGML_TYPE_Q6_K,   GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q6_K, GGML_TYPE_Q8_0 };
+        case LLAMA_FTYPE_MOSTLY_Q8_K_P: return { GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, GGML_TYPE_BF16, GGML_TYPE_Q8_0,   GGML_TYPE_Q8_0,   GGML_TYPE_Q8_0, GGML_TYPE_BF16, GGML_TYPE_BF16, GGML_TYPE_Q8_0 };
+        default: GGML_ABORT("not a K_P file type");
+    }
+}
+
+static ggml_type llama_tensor_get_type_kp(const quantize_state_impl & qs, const std::string & name, llama_ftype ftype, tensor_category category) {
+    const llama_kp_recipe rc = llama_kp_get_recipe(ftype);
+
+    auto has = [&name](const char * s) { return name.find(s) != std::string::npos; };
+
+    if (category == tensor_category::OUTPUT || has("shared_head_head") || (qs.has_tied_embeddings && category == tensor_category::TOKEN_EMBD)) {
+        return rc.out;
+    }
+    if (category == tensor_category::TOKEN_EMBD || has("embed_tokens")) {
+        return rc.embd;
+    }
+    if (has("eh_proj")) {
+        return rc.proj;
+    }
+    switch (category) {
+        case tensor_category::ATTENTION_V:      return rc.v;
+        case tensor_category::ATTENTION_QKV:    return rc.qkv;
+        case tensor_category::ATTENTION_Q:
+        case tensor_category::ATTENTION_K:
+        case tensor_category::ATTENTION_KV_B:
+        case tensor_category::ATTENTION_OUTPUT: return rc.attn;
+        case tensor_category::FFN_UP:           return rc.up;
+        case tensor_category::FFN_GATE:         return rc.gate;
+        case tensor_category::FFN_DOWN:         return rc.down;
+        default: break;
+    }
+    if (has("attn_gate")) {
+        return rc.z;
+    }
+    if (has("ssm_out")) {
+        return rc.sout;
+    }
+    if (has("ssm_alpha") || has("ssm_beta")) {
+        return rc.small;
+    }
+    return rc.base;
+}
+
 // internal standard logic for selecting the target tensor type based on tensor category, ftype, and model arch
 static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type new_type, const ggml_tensor * tensor, llama_ftype ftype, tensor_category category) {
     const std::string name = ggml_get_name(tensor);
+
+    if (llama_ftype_is_kp(ftype)) {
+        return llama_tensor_get_type_kp(qs, name, ftype, category);
+    }
 
     // TODO: avoid hardcoded tensor names - use the TN_* constants
     const llm_arch arch = qs.model.arch;
@@ -781,6 +875,9 @@ static bool tensor_requires_imatrix(const char * tensor_name, const ggml_type ds
     if (tensor_name_match_token_embd(tensor_name) || tensor_name_match_output_weight(tensor_name)) {
         return false;
     }
+    if (llama_ftype_is_kp(ftype)) {
+        return ggml_is_quantized(dst_type);
+    }
     switch (dst_type) {
         case GGML_TYPE_IQ3_XXS:
         case GGML_TYPE_IQ2_XXS:
@@ -829,6 +926,12 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_Q5_K_S:
         case LLAMA_FTYPE_MOSTLY_Q5_K_M:  return GGML_TYPE_Q5_K;
         case LLAMA_FTYPE_MOSTLY_Q6_K:    return GGML_TYPE_Q6_K;
+        case LLAMA_FTYPE_MOSTLY_Q2_K_P:
+        case LLAMA_FTYPE_MOSTLY_Q3_K_P:
+        case LLAMA_FTYPE_MOSTLY_Q4_K_P:
+        case LLAMA_FTYPE_MOSTLY_Q5_K_P:
+        case LLAMA_FTYPE_MOSTLY_Q6_K_P:
+        case LLAMA_FTYPE_MOSTLY_Q8_K_P:  return llama_kp_get_recipe(ftype).base;
         case LLAMA_FTYPE_MOSTLY_TQ1_0:   return GGML_TYPE_TQ1_0;
         case LLAMA_FTYPE_MOSTLY_TQ2_0:   return GGML_TYPE_TQ2_0;
         case LLAMA_FTYPE_MOSTLY_IQ2_XXS: return GGML_TYPE_IQ2_XXS;
@@ -947,7 +1050,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     // copy the KV pairs from the input file
     gguf_set_kv     (ctx_out.get(), ml.metadata);
     gguf_set_val_u32(ctx_out.get(), ml.llm_kv(LLM_KV_GENERAL_QUANTIZATION_VERSION).c_str(), GGML_QNT_VERSION);
-    gguf_set_val_u32(ctx_out.get(), ml.llm_kv(LLM_KV_GENERAL_FILE_TYPE).c_str(), ftype);
+    gguf_set_val_u32(ctx_out.get(), ml.llm_kv(LLM_KV_GENERAL_FILE_TYPE).c_str(), llama_ftype_kp_file_type(ftype));
 
     // Remove split metadata
     gguf_remove_key(ctx_out.get(), ml.llm_kv(LLM_KV_SPLIT_NO).c_str());

@@ -157,6 +157,15 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_Q1_0          = 40, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q2_0          = 41, // except 1d tensors
 
+        // K_P mixes: role based tensor types on top of the base K-quant, imatrix required
+        // the file records the matching standard type (Q2_K, Q3_K_M, Q4_K_M, Q5_K_M, Q6_K, Q8_0) for compatibility
+        LLAMA_FTYPE_MOSTLY_Q2_K_P        = 42,
+        LLAMA_FTYPE_MOSTLY_Q3_K_P        = 43,
+        LLAMA_FTYPE_MOSTLY_Q4_K_P        = 44,
+        LLAMA_FTYPE_MOSTLY_Q5_K_P        = 45,
+        LLAMA_FTYPE_MOSTLY_Q6_K_P        = 46,
+        LLAMA_FTYPE_MOSTLY_Q8_K_P        = 47,
+
         LLAMA_FTYPE_GUESSED = 1024, // not specified in the model file
     };
 
