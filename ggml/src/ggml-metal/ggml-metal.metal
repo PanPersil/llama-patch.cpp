@@ -2232,7 +2232,15 @@ template [[host_name("kernel_soft_max_f32")]]   kernel kernel_soft_max_t   kerne
 template [[host_name("kernel_soft_max_f16_4")]] kernel kernel_soft_max_4_t kernel_soft_max_4<half4>;
 template [[host_name("kernel_soft_max_f32_4")]] kernel kernel_soft_max_4_t kernel_soft_max_4<float4>;
 
+constant bool FC_ssm_conv_silu [[function_constant(FC_SSM_CONV + 1)]];
+
+// SiLU of the conv output when the next op (UNARY SILU) is fused
+static inline float ssm_conv_out(float x) {
+    return FC_ssm_conv_silu ? x / (1 + exp(-x)) : x;
+}
+
 // ref: ggml.c:ggml_compute_forward_ssm_conv_f32
+// one row per thread, the threadgroup covers ntg.x rows
 kernel void kernel_ssm_conv_f32_f32(
         constant ggml_metal_kargs_ssm_conv & args,
         device const  void * src0,
@@ -2241,9 +2249,13 @@ kernel void kernel_ssm_conv_f32_f32(
         uint3 tgpig[[threadgroup_position_in_grid]],
         uint3 tpitg[[thread_position_in_threadgroup]],
         uint3   ntg[[threads_per_threadgroup]]) {
-    const int64_t ir = tgpig.x;
+    const int64_t ir = (int64_t) tgpig.x*ntg.x + tpitg.x;
     const int64_t i2 = tgpig.y;
     const int64_t i3 = tgpig.z;
+
+    if (ir >= args.ne01) {
+        return;
+    }
 
     const int64_t nc  = args.ne10;
   //const int64_t ncs = args.ne00;
@@ -2261,7 +2273,7 @@ kernel void kernel_ssm_conv_f32_f32(
         sumf += s[i0] * c[i0];
     }
 
-    x[0] = sumf;
+    x[0] = ssm_conv_out(sumf);
 }
 
 kernel void kernel_ssm_conv_f32_f32_4(
@@ -2272,9 +2284,13 @@ kernel void kernel_ssm_conv_f32_f32_4(
         uint3 tgpig[[threadgroup_position_in_grid]],
         uint3 tpitg[[thread_position_in_threadgroup]],
         uint3   ntg[[threads_per_threadgroup]]) {
-    const int64_t ir = tgpig.x;
+    const int64_t ir = (int64_t) tgpig.x*ntg.x + tpitg.x;
     const int64_t i2 = tgpig.y;
     const int64_t i3 = tgpig.z;
+
+    if (ir >= args.ne01) {
+        return;
+    }
 
     const int64_t nc  = args.ne10;
   //const int64_t ncs = args.ne00;
@@ -2292,7 +2308,7 @@ kernel void kernel_ssm_conv_f32_f32_4(
         sumf += dot(s[i0], c[i0]);
     }
 
-    x[0] = sumf;
+    x[0] = ssm_conv_out(sumf);
 }
 
 constant short FC_ssm_conv_bs   [[function_constant(FC_SSM_CONV + 0)]];
@@ -2341,7 +2357,7 @@ kernel void kernel_ssm_conv_f32_f32_batched(
         sumf += s[i0] * c[i0];
     }
 
-    x[0] = sumf;
+    x[0] = ssm_conv_out(sumf);
 }
 
 kernel void kernel_ssm_conv_f32_f32_batched_4(
@@ -2386,7 +2402,7 @@ kernel void kernel_ssm_conv_f32_f32_batched_4(
         sumf += dot(s[i0], c[i0]);
     }
 
-    x[0] = sumf;
+    x[0] = ssm_conv_out(sumf);
 }
 
 // ref: ggml.c:ggml_compute_forward_ssm_scan_f32, Mamba-2 part

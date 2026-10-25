@@ -1632,8 +1632,23 @@ int ggml_metal_op_ssm_conv(ggml_metal_op_t ctx, int idx) {
     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
     GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
     GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
-    GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
-    GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
+    // fuse the UNARY SILU that follows
+    const ggml_tensor * dst = op;
+    int n_fuse = 1;
+
+    if (ctx->use_fusion) {
+        const ggml_op fops[2] = { GGML_OP_SSM_CONV, GGML_OP_UNARY };
+        if (ctx->can_fuse(idx, fops, 2) && ggml_get_unary_op(ctx->node(idx + 1)) == GGML_UNARY_OP_SILU &&
+            ggml_is_contiguous(ctx->node(idx + 1))) {
+            dst = ctx->node(idx + 1);
+            n_fuse = 2;
+        }
+    }
+
+    const bool silu = n_fuse == 2;
+
+    GGML_TENSOR_LOCALS( int32_t, ne,  dst,        ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb,  dst,        nb);
 
     ggml_metal_kargs_ssm_conv args = {
         /*.ne00 =*/ ne00,
@@ -1668,31 +1683,34 @@ int ggml_metal_op_ssm_conv(ggml_metal_op_t ctx, int idx) {
         else if (ne1 > 4  ) BATCH_SIZE = 8;
         else                BATCH_SIZE = 2;
 
-        auto pipeline = ggml_metal_library_get_pipeline_ssm_conv_batched(lib, op, BATCH_SIZE);
+        auto pipeline = ggml_metal_library_get_pipeline_ssm_conv_batched(lib, op, BATCH_SIZE, silu);
 
         ggml_metal_encoder_set_pipeline(enc, pipeline);
         ggml_metal_encoder_set_bytes(enc, &args, sizeof(args), 0);
         ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[0]), 1);
         ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[1]), 2);
-        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op),         3);
+        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(dst),        3);
 
         // Dispatch: ne01 rows, ceil(ne1/BATCH_SIZE) token batches, ne02 sequences
         // Each threadgroup has BATCH_SIZE threads, each handling one token
         const int n_token_batches = (ne1 + BATCH_SIZE - 1) / BATCH_SIZE;
         ggml_metal_encoder_dispatch_threadgroups(enc, ne01, n_token_batches, ne02, BATCH_SIZE, 1, 1);
     } else {
-        auto pipeline = ggml_metal_library_get_pipeline_ssm_conv(lib, op);
+        auto pipeline = ggml_metal_library_get_pipeline_ssm_conv(lib, op, silu);
 
         ggml_metal_encoder_set_pipeline(enc, pipeline);
         ggml_metal_encoder_set_bytes(enc, &args, sizeof(args), 0);
         ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[0]), 1);
         ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[1]), 2);
-        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op),         3);
+        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(dst),        3);
 
-        ggml_metal_encoder_dispatch_threadgroups(enc, ne01, ne1, ne02, 1, 1, 1);
+        // one row per thread
+        const int nth = std::min(256, ne01);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + nth - 1)/nth, ne1, ne02, nth, 1, 1);
     }
 
-    return 1;
+    return n_fuse;
 }
 
 int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {

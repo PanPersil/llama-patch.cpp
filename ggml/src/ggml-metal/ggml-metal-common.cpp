@@ -428,6 +428,17 @@ void ggml_graph_optimize(ggml_cgraph * gf) {
             }
         }
 
+        // keep SSM_CONV and the SILU after it together
+        if (node.op() == GGML_OP_SSM_CONV && i + 1 < n) {
+            ops[0] = GGML_OP_SSM_CONV;
+            ops[1] = GGML_OP_UNARY;
+
+            if (ggml_can_fuse(gf, i, ops, 2) && ggml_get_unary_op(gf->nodes[i + 1]) == GGML_UNARY_OP_SILU) {
+                ++i;
+                node.add_fused(gf->nodes[i]);
+            }
+        }
+
         // keep GATED_DELTA_NET and the cpy of its state into the recurrent cache together (with the views in between)
         if (node.op() == GGML_OP_GATED_DELTA_NET) {
             int f = i + 1;
