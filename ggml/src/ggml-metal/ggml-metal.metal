@@ -782,25 +782,26 @@ void dequantize_q4_K(device const block_q4_K * xb, short il, thread type4x4 & re
 
 template <typename type4x4>
 void dequantize_q5_K(device const block_q5_K *xb, short il, thread type4x4 & reg) {
-    device const uint8_t * q  = xb->qs;
-    device const uint8_t * qh = xb->qh;
+    // il/4: chunk of 64 quants, il&1: first or second 16 bytes, (il/2)&1: low or high nibbles
+    device const uint32_t * q  = (device const uint32_t *)(xb->qs + 32 * (il/4) + 16 * (il&1));
+    device const uint32_t * qh = (device const uint32_t *)(xb->qh + 16 * (il&1));
 
-    short is = (il/4) * 2;
-    q  = q + 32 * (il/4) + 16 * (il&1);
-    qh = qh + 16 * (il&1);
-    uint8_t ul = 1 << (il/2);
-    il = il & 3;
-    const uchar2 sc = get_scale_min_k4_just2(is, il/2, xb->scales);
-    const float d = il < 2 ? xb->d : xb->d / 16.f;
-    const float min = xb->dmin;
-    const float dl = d * sc[0];
-    const float ml = min * sc[1];
+    const short nib = (il/2) & 1;
+    const short hb  = il/2;
 
-    const ushort mask  = il<2 ? 0x0F : 0xF0;
-    const float qh_val = il<2 ? 16.f : 256.f;
-    for (int i = 0; i < 16; ++i) {
-        reg[i/4][i%4] = dl * ((q[i] & mask) + (qh[i] & ul ? qh_val : 0)) - ml;
+    const uchar2 sc = get_scale_min_k4_just2(2 * (il/4), nib, xb->scales);
+    const float dl = (float) xb->d    * sc[0];
+    const float ml = (float) xb->dmin * sc[1];
+
+    float4x4 reg_f;
+
+    // put the high bit next to the 4 low bits in each byte and convert 4 quants at once
+    for (int i = 0; i < 4; ++i) {
+        const uint32_t v = ((q[i] >> 4*nib) & 0x0F0F0F0F) | (((qh[i] >> hb) & 0x01010101) << 4);
+        reg_f[i] = dl * float4(as_type<uchar4>(v)) - ml;
     }
+
+    reg = (type4x4) reg_f;
 }
 
 template <typename type4x4>
