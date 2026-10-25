@@ -2455,7 +2455,8 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
            op->src[0]->type == GGML_TYPE_Q3_K ||
            false) && (ne11 >= 4 && ne11 <= 8)
          )
-        )
+        ) &&
+        ggml_metal_mul_mv_nc(op->src[0]->type, ne11) == 0
        ) {
         // TODO: determine the optimal parameters based on grid utilization
         //       I still don't know why we should not always use the maximum available threads:

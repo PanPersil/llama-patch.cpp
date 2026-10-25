@@ -798,6 +798,24 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
     return res;
 }
 
+int ggml_metal_mul_mv_nc(enum ggml_type type, int64_t ne11) {
+    // measured on M2 Max: with more columns the registers run out and the kernels get slower than the existing paths
+    switch (type) {
+        case GGML_TYPE_Q5_K:
+            return ne11 == 2 ? 2 : 0;
+        case GGML_TYPE_Q6_K:
+            return ne11 == 2 || ne11 == 3 ? ne11 : 0;
+        case GGML_TYPE_IQ4_XS:
+            if (ne11 < 2 || ne11 > 8) {
+                return 0;
+            }
+            // 5..8 columns: two passes over the weights
+            return ne11 <= 4 ? ne11 : (ne11 + 1)/2;
+        default:
+            return 0;
+    }
+}
+
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_metal_library_t lib, const ggml_tensor * op) {
     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
     GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
@@ -815,6 +833,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
     const ggml_type tsrc1 = op->src[1]->type;
 
     const char * suffix = "";
+    char nc_suffix[16];
 
     // use custom matrix x vector kernel
     switch (tsrc0) {
@@ -896,11 +915,27 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
             {
                 nsg = N_SG_Q5_K;
                 nr0 = N_R0_Q5_K;
+
+                // a few src1 columns: read the weights once for all of them
+                const int nc = ggml_metal_mul_mv_nc(tsrc0, ne11);
+                if (nc > 1) {
+                    nr1 = nc;
+                    snprintf(nc_suffix, sizeof(nc_suffix), "_nc%d", nc);
+                    suffix = nc_suffix;
+                }
             } break;
         case GGML_TYPE_Q6_K:
             {
                 nsg = N_SG_Q6_K;
                 nr0 = N_R0_Q6_K;
+
+                // a few src1 columns: read the weights once for all of them
+                const int nc = ggml_metal_mul_mv_nc(tsrc0, ne11);
+                if (nc > 1) {
+                    nr1 = nc;
+                    snprintf(nc_suffix, sizeof(nc_suffix), "_nc%d", nc);
+                    suffix = nc_suffix;
+                }
             } break;
         case GGML_TYPE_IQ2_XXS:
             {
@@ -952,6 +987,14 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                 nsg = N_SG_IQ4_XS;
                 nr0 = N_R0_IQ4_XS;
                 smem = 32*sizeof(float);
+
+                // a few src1 columns: read the weights once for all of them
+                const int nc = ggml_metal_mul_mv_nc(tsrc0, ne11);
+                if (nc > 1) {
+                    nr1 = nc;
+                    snprintf(nc_suffix, sizeof(nc_suffix), "_nc%d", nc);
+                    suffix = nc_suffix;
+                }
             } break;
         case GGML_TYPE_TQ2_0:
             {
