@@ -2466,12 +2466,22 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
          ) ||
          (
           (
-           op->src[0]->type == GGML_TYPE_Q4_K ||
-           op->src[0]->type == GGML_TYPE_Q5_K ||
-           op->src[0]->type == GGML_TYPE_Q6_K ||
-           op->src[0]->type == GGML_TYPE_Q2_K ||
-           op->src[0]->type == GGML_TYPE_Q3_K ||
-           false) && (ne11 >= 4 && ne11 <= 8)
+           op->src[0]->type == GGML_TYPE_Q3_K    ||
+           op->src[0]->type == GGML_TYPE_Q4_K    ||
+           op->src[0]->type == GGML_TYPE_Q5_K    ||
+           op->src[0]->type == GGML_TYPE_Q6_K    ||
+           op->src[0]->type == GGML_TYPE_IQ1_S   ||
+           op->src[0]->type == GGML_TYPE_IQ1_M   ||
+           op->src[0]->type == GGML_TYPE_IQ2_XXS ||
+           op->src[0]->type == GGML_TYPE_IQ2_XS  ||
+           op->src[0]->type == GGML_TYPE_IQ2_S   ||
+           op->src[0]->type == GGML_TYPE_IQ3_XXS ||
+           op->src[0]->type == GGML_TYPE_IQ3_S   ||
+           op->src[0]->type == GGML_TYPE_IQ4_XS  ||
+           false) && (ne11 >= 2 && ne11 <= 8)
+         ) ||
+         (
+           op->src[0]->type == GGML_TYPE_Q2_K && (ne11 >= 3 && ne11 <= 8)
          )
         ) &&
         ggml_metal_mul_mv_nc(op->src[0]->type, ne11) == 0
@@ -2487,10 +2497,9 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         const int nsg    = 2;                 // num simdgroups per threadgroup
 
         // num threads along row per simdgroup
+        // note: 8 threads per row also for 2 columns, 16 was slower on M2 Max for all types
         int16_t nxpsg = 0;
-        if (ne00 % 256 == 0 && ne11 < 3) {
-            nxpsg = 16;
-        } else if (ne00 % 128 == 0) {
+        if (ne00 % 128 == 0) {
             nxpsg = 8;
         } else {
             nxpsg = 4;
