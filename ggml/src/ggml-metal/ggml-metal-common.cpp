@@ -428,6 +428,22 @@ void ggml_graph_optimize(ggml_cgraph * gf) {
             }
         }
 
+        // keep GATED_DELTA_NET and the cpy of its state into the recurrent cache together (with the views in between)
+        if (node.op() == GGML_OP_GATED_DELTA_NET) {
+            int f = i + 1;
+            while (f < n && f < i + MAX_FUSE && ggml_op_is_empty(gf->nodes[f]->op)) {
+                f++;
+            }
+
+            if (f < n && f < i + MAX_FUSE && gf->nodes[f]->op == GGML_OP_CPY &&
+                gf->nodes[f]->src[0]->view_src == node.node) {
+                while (i < f) {
+                    ++i;
+                    node.add_fused(gf->nodes[i]);
+                }
+            }
+        }
+
         nodes.push_back(std::move(node));
     }
 

@@ -1839,6 +1839,50 @@ int ggml_metal_op_rwkv(ggml_metal_op_t ctx, int idx) {
     return 1;
 }
 
+// GATED_DELTA_NET followed by the CPY of its state snapshots (the tail of its output) into the recurrent cache
+// note: the tail must have no other consumers, the kernel does not write it when fused
+static bool ggml_metal_op_can_fuse_gdn_cache(ggml_metal_op_t ctx, int idx) {
+    if (idx + 1 >= ctx->n_nodes()) {
+        return false;
+    }
+
+    const ggml_tensor * gdn = ctx->node(idx);
+    const ggml_tensor * cpy = ctx->node(idx + 1);
+
+    if (gdn->type != GGML_TYPE_F32 || (gdn->flags & GGML_TENSOR_FLAG_OUTPUT)) {
+        return false;
+    }
+
+    if (cpy->op != GGML_OP_CPY || (cpy->flags & GGML_TENSOR_FLAG_OUTPUT)) {
+        return false;
+    }
+
+    const int64_t S_v      = gdn->src[2]->ne[0];
+    const int64_t H        = gdn->src[2]->ne[1];
+    const int64_t n_tokens = gdn->src[2]->ne[2];
+    const int64_t n_seqs   = gdn->src[2]->ne[3];
+    const int64_t K        = ggml_get_op_params_i32(gdn, 0);
+    const size_t  tail_off = ggml_row_size(GGML_TYPE_F32, S_v*H*n_tokens*n_seqs);
+
+    const int64_t D         = S_v*S_v*H;
+    const int64_t n_written = std::min<int64_t>(n_tokens, K);
+
+    const ggml_tensor * src = cpy->src[0]; // snapshot tail view
+    const ggml_tensor * dst = cpy->src[1]; // cache view
+
+    if (src->op != GGML_OP_VIEW || src->view_src != gdn || src->view_offs != tail_off || !ggml_is_contiguous(src)) {
+        return false;
+    }
+
+    if (dst->type != GGML_TYPE_F32 || dst->data == nullptr ||
+        dst->ne[0] != D || dst->ne[1] != n_seqs || dst->ne[2] != n_written || dst->ne[3] != 1 ||
+        dst->nb[0] != sizeof(float) || dst->nb[1] != ggml_row_size(GGML_TYPE_F32, D)) {
+        return false;
+    }
+
+    return true;
+}
+
 int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
@@ -1856,6 +1900,27 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
     GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
 
     auto pipeline = ggml_metal_library_get_pipeline_gated_delta_net(lib, op);
+
+    // when the next op is the cpy of the state snapshots into the recurrent cache, write them to the cache directly
+    ggml_metal_buffer_id bid_out = ggml_metal_get_buffer_id(op);
+    uint64_t nb_out = 0;
+    int n_fuse = 1;
+
+    if (ctx->use_fusion && ggml_metal_op_can_fuse_gdn_cache(ctx, idx)) {
+        const ggml_tensor * cpy = ctx->node(idx + 1);
+
+        if (!ggml_metal_op_concurrency_check(ctx, cpy)) {
+            ggml_metal_op_concurrency_reset(ctx);
+        }
+
+        bid_out = ggml_metal_get_buffer_id(cpy->src[1]);
+        nb_out  = cpy->src[1]->nb[2]/sizeof(float);
+        n_fuse  = 2;
+
+        if (ctx->debug_fusion > 1) {
+            GGML_LOG_DEBUG("%s: fuse: GATED_DELTA_NET + CPY\n", __func__);
+        }
+    }
 
     int ida = 0;
 
@@ -1895,6 +1960,7 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
         /*.nb1  =*/ nb1,
         /*.nb2  =*/ nb2,
         /*.nb3  =*/ nb3,
+        /*.nb_out =*/ nb_out,
     };
 
     ggml_metal_encoder_set_pipeline(enc, pipeline);
@@ -1906,12 +1972,13 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[4]), ida++); // beta
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[5]), ida++); // state
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         ida++); // dst
+    ggml_metal_encoder_set_buffer  (enc, bid_out,                              ida++); // state snapshots when fused
 
     const int nsg = pipeline.nsg;
 
     ggml_metal_encoder_dispatch_threadgroups(enc, op->src[2]->ne[0]/nsg, op->src[2]->ne[1], op->src[2]->ne[3], 32, nsg, 1);
 
-    return 1;
+    return n_fuse;
 }
 
 int ggml_metal_op_solve_tri(ggml_metal_op_t ctx, int idx) {
