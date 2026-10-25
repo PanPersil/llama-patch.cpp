@@ -108,9 +108,18 @@ Qwen3.8-27B Q4_K_P, flash attention, q4_0 KV cache, before (upstream + FastMTP) 
 | 3 tokens | 215 ms | 129 ms |
 | 4 tokens | 192 ms | 148 ms |
 
-With the FastMTP sidecar on a short code prompt at temperature 0, `--spec-draft-n-max 3 --spec-draft-p-min 0.6` gave
-20.3 t/s against 10.5 t/s without a draft (1.93x). The gain depends on the prompt and on how many draft tokens are
-accepted.
+MTP speculative decoding with the FastMTP sidecar, 3 prompts (an explanation, a story and code) of 256 tokens each:
+
+| draft settings | temperature 0 | temperature 1 |
+|---|---:|---:|
+| no draft | 10.4 t/s | 9.7 t/s |
+| `--spec-draft-n-max 1 --spec-draft-p-min 0.4` | 13.8 t/s (1.32x) | 12.9 t/s (1.33x) |
+| `--spec-draft-n-max 3 --spec-draft-p-min 0.4` | 14.6 t/s (1.40x) | 13.6 t/s (1.40x) |
+| `--spec-draft-n-max 3 --spec-draft-p-min 0.6` | 15.6 t/s (1.50x) | 14.0 t/s (1.44x) |
+| `--spec-draft-n-max 2 --spec-draft-p-min 0.6` | 15.0 t/s (1.44x) | 14.1 t/s (1.45x) |
+
+The gain depends on how predictable the text is. With `--spec-draft-n-max 3 --spec-draft-p-min 0.6` at temperature 0
+the code prompt ran at 17.9 t/s (1.84x), the explanation at 16.1 t/s (1.41x) and the story at 13.4 t/s (1.31x).
 
 Perplexity did not change: 3.4454 before and after on the same text with `-c 1024 --chunks 12`.
 
