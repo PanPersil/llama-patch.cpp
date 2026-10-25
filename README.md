@@ -1,125 +1,119 @@
-# llama.cpp
+# llama-patch.cpp
 
-![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
+llama.cpp with the HauhauCS FastMTP patch, a strongly optimized Metal backend and K_P quantization mixes.
 
-<div align="center">
+## What this is built from
 
-<b>LLM inference in C/C++</b>
-
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp)](https://github.com/ggml-org/llama.cpp/releases)
-[![Server](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
-[![Docker](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml)
-[![Winget](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml)
-
-[manifesto](https://github.com/ggml-org/llama.cpp/discussions/205) / [ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [maintainer PRs](https://github.com/ggml-org/llama.cpp/issues?q=is%3Apr%20is%3Aopen%20draft%3AFalse%20(author%3Argerganov%20OR%20author%3AKitaitiMakoto%20OR%20author%3Adanbev%20OR%20author%3Aaldehir%20OR%20author%3Amax-krasnyansky%20OR%20author%3ACISC%20OR%20author%3Aggerganov%20OR%20author%3Aam17an%20OR%20author%3Abartowski1182%20OR%20author%3Ahipudding%20OR%20author%3AServeurpersoCom%20OR%20author%3Apwilkin%20OR%20author%3Areeselevine%20OR%20author%3Angxson%20OR%20author%3Ajeffbolznv%20OR%20author%3A0cc4m%20OR%20author%3Aangt%20OR%20author%3AIMbackK%20OR%20author%3Aarthw%20OR%20author%3AJohannesGaessler%20OR%20author%3AORippler%20OR%20author%3Aruixiang63%20OR%20author%3Axctan%20OR%20author%3Aallozaur%20OR%20author%3Ayomaytk%20OR%20author%3Aaendk%20OR%20author%3Agaugarg-nv%20OR%20author%3Ataronaeo%20OR%20author%3Aforforever73%20OR%20author%3Alhez%20OR%20author%3Anetrunnereve%20OR%20author%3Afairydreaming)%20sort%3Aupdated-desc) / [compile times](https://github.com/ggml-org/llama.cpp-dev/blob/master/README-compile-times.md) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
-
-</div>
-
-## Quick start
-
-A few options to get `llama.cpp` installed on your machine:
-
-- Visit https://llama.app and follow the instructions
-- Run with Docker - see our [Docker documentation](docs/docker.md)
-- Download pre-built binaries from the [releases page](https://github.com/ggml-org/llama.cpp/releases)
-- Build from source by cloning this repository - check out [our build guide](docs/build.md)
-
-Once installed:
+This repository starts from upstream [llama.cpp](https://github.com/ggml-org/llama.cpp) at commit
+`4df29be4f4c3673f428170fda944a5b19f743bb8` with the HauhauCS FastMTP patch applied:
 
 ```sh
-# Download and run a model directly from Hugging Face
-llama cli -hf ggml-org/Qwen3.5-0.8B-GGUF
-
-# Launch OpenAI-compatible API server
-llama serve -hf ggml-org/Qwen3.5-0.8B-GGUF
+git clone https://github.com/ggml-org/llama.cpp
+cd llama.cpp
+git checkout 4df29be4f4c3673f428170fda944a5b19f743bb8
+curl -L -o HauhauCS-FastMTP-llama.cpp.patch \
+  https://huggingface.co/HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF/resolve/main/HauhauCS-FastMTP-llama.cpp.patch
+git apply --check HauhauCS-FastMTP-llama.cpp.patch
+git apply HauhauCS-FastMTP-llama.cpp.patch
 ```
 
-<table align="center">
-    <tr>
-        <td align="center" width=50%>
-            <img width="1310" height="888" alt="VLM session with `llama cli`" src="https://github.com/user-attachments/assets/88726b48-1713-48aa-a525-95a02e78afc4" />
-            <i>VLM session with <b>llama cli</b></i>
-        </td>
-        <td align="center">
-            <img width="1392" height="958" alt="Built-in web UI against `llama serve` running Qwen 3.6" src="https://github.com/user-attachments/assets/b402f972-2e32-4def-8771-8d849f08cf2e" />
-            <i>Built-in web UI against <b>llama serve</b></i>
-        </td>
-    </tr>
-<table>
+The upstream commit history is not included. The history was cut after the patch was applied, so the first commit
+here is upstream `4df29be` plus the FastMTP patch, and every later commit is a change made in this repository.
 
-## Description
+## The model
 
-The main goal of `llama.cpp` is to enable LLM (and VLM) inference with minimal setup and state-of-the-art performance on
-a wide range of hardware - locally and in the cloud.
+The patch comes with
+[HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF](https://huggingface.co/HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF),
+an uncensored build of Qwen3.8-27B. The model is a hybrid: 48 gated delta net (linear attention) layers and 16 full
+attention layers, 262144 tokens of context, a vision projector and one MTP block for speculative decoding. The repository
+has quants from IQ2_M to Q8_K_P and a FastMTP sidecar (903 MB) that works as the draft model with every text quant.
 
-- Plain C/C++ implementation without any dependencies
-- Apple silicon is a first-class citizen - optimized via ARM NEON, Accelerate and Metal frameworks
-- AVX, AVX2, AVX512 and AMX support for x86 architectures
-- RVV, ZVFH, ZFH, ZICBOP and ZIHINTPAUSE support for RISC-V architectures
-- 1.5-bit, 2-bit, 3-bit, 4-bit, 5-bit, 6-bit, and 8-bit integer quantization for faster inference and reduced memory use
-- Custom CUDA kernels for running LLMs on NVIDIA GPUs (support for AMD GPUs via HIP and Moore Threads GPUs via MUSA)
-- Vulkan and SYCL backend support
-- CPU+GPU hybrid inference to partially accelerate models larger than the total VRAM capacity
+Example server with MTP speculative decoding:
 
-The `llama.cpp` project is build on top of the [ggml](https://github.com/ggml-org/ggml) library.
+```sh
+./build/bin/llama-server \
+  --model Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf \
+  --spec-draft-model Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-FastMTP-32K.gguf \
+  --spec-type draft-mtp --spec-draft-ngl all --spec-draft-n-max 3 --spec-draft-p-min 0.6 \
+  --flash-attn on --cache-type-k q4_0 --cache-type-v q4_0 \
+  --n-gpu-layers 100 --ctx-size 262144 --jinja
+```
 
-## Supported backends
+The server listens on port 11434 by default in this repository.
 
-| Backend | Target devices |
-| --- | --- |
-| [BLAS](docs/build.md#blas-build) | All |
-| [BLIS](docs/backend/BLIS.md) | All |
-| [CANN](docs/build.md#cann) | Ascend NPU |
-| [CUDA](docs/build.md#cuda) | Nvidia GPU |
-| [HIP](docs/build.md#hip) | AMD GPU |
-| [Hexagon [In Progress]](docs/backend/snapdragon/README.md) | Snapdragon |
-| [IBM zDNN](docs/backend/zDNN.md) | IBM Z & LinuxONE |
-| [MUSA](docs/build.md#musa) | Moore Threads GPU |
-| [Metal](docs/build.md#metal-build) | Apple Silicon |
-| [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
-| [OpenVINO [In Progress]](docs/backend/OPENVINO.md) | Intel CPUs, GPUs, and NPUs |
-| [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
-| [SYCL](docs/backend/SYCL.md) | Intel GPU |
-| [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
-| [Vulkan](docs/build.md#vulkan) | GPU |
-| [WebGPU](docs/build.md#webgpu) | All |
-| [ZenDNN](docs/build.md#zendnn) | AMD CPU |
+## Changes compared to upstream + FastMTP
 
-## Documentation
+### Metal backend
 
-#### Tools
+- Faster mat-vec for Q5_K: the 5th bit is merged into each byte with mask operations and 4 quants are converted at once.
+  A layout with 4 row groups per simdgroup shares the activation loads between rows, so extra tokens in a batch cost
+  little. This matters for the verify step of speculative decoding (MTP or a draft model), which runs 2 to 5 tokens.
+- Small-batch kernels (2 to 8 tokens) for all K-quants and i-quants. Before, these types read the weights once per token
+  for small batches.
+- Faster Q5_K dequantization for prompt processing, and 64x64 mat-mat tiles on GPUs without the Metal tensor API.
+- Gated delta net: the new recurrent state is written straight into the cache (no extra copy), and the single-token
+  SSM_CONV kernel runs one row per thread with the following SiLU fused into it.
+- IQ4_NL K/V cache support in flash attention. Before, an IQ4_NL KV cache made attention fall back to the CPU.
+- `GGML_METAL_PROFILE=1` prints the GPU time of every op (GPU timestamps at encoder boundaries).
+  `GGML_METAL_PROFILE=2` reports the GPU time of whole graphs and the CPU time spent encoding them.
 
-- [cli](tools/cli/README.md)
-- [completion](tools/completion/README.md)
-- [server](tools/server/README.md)
-- [GBNF grammars](grammars/README.md)
+All changed ops are covered by `test-backend-ops`, with extra tests for multi-block rows, small batches, IQ4_NL flash
+attention and the gated delta net cache fusion.
 
-#### Development
+### K_P quantization mixes
 
-- [How to build](docs/build.md)
-- [Running on Docker](docs/docker.md)
-- [Build on Android](docs/android.md)
-- [Multi-GPU usage](docs/multi-gpu.md)
-- [Performance troubleshooting](docs/development/token_generation_performance_tips.md)
-- [GGML tips & tricks](https://github.com/ggml-org/llama.cpp/wiki/GGML-Tips-&-Tricks)
-- [XCFramework](docs/xcframework.md)
-- [Completions](docs/completions.md)
-- [Models](docs/models.md)
-- [Release process](docs/release.md)
+`llama-quantize` has the K_P mixes Q2_K_P, Q3_K_P, Q4_K_P, Q5_K_P, Q6_K_P and Q8_K_P. They give attention, `ffn_down`,
+the gated delta net projections, `attn_v`, the output head and the MTP input projection more bits than the base K-quant
+and keep `ffn_up` / `ffn_gate` at or below it. They need an imatrix:
 
-## Contributing
+```sh
+./build/bin/llama-quantize --imatrix imatrix.gguf model-BF16.gguf model-Q4_K_P.gguf Q4_K_P
+```
 
-- Contributors can open PRs
-- Collaborators will be invited based on contributions
-- Maintainers can push to branches in the `llama.cpp` repo and merge PRs into the `master` branch
-- Any help with managing issues, PRs and projects is very appreciated!
-- Read the [CONTRIBUTING.md](CONTRIBUTING.md) for more information
+For compatibility the file records the matching standard type (Q2_K, Q3_K_M, Q4_K_M, Q5_K_M, Q6_K or Q8_0).
+On Qwen3.8-27B with the MTP block the mixes give the same bits per weight as the published K_P files:
 
-## Acknowledgements
+| mix | bpw |
+|---|---:|
+| Q8_K_P | 9.21 |
+| Q6_K_P | 7.59 |
+| Q5_K_P | 5.92 |
+| Q4_K_P | 5.25 |
+| Q3_K_P | 3.93 |
+| Q2_K_P | 3.12 |
 
-- [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) - Single-header HTTP server, used by `llama-server` - MIT license
-- [stb-image](https://github.com/nothings/stb) - Single-header image format decoder, used by multimodal subsystem - Public domain
-- [nlohmann/json](https://github.com/nlohmann/json) - Single-header JSON library, used by various tools/examples - MIT License
-- [miniaudio.h](https://github.com/mackron/miniaudio) - Single-header audio format decoder, used by multimodal subsystem - Public domain
-- [subprocess.h](https://github.com/sheredom/subprocess.h) - Single-header process launching solution for C and C++ - Public domain
+Q4_K_P gives exactly the tensor types of the published HauhauCS Q4_K_P file.
+
+### Server
+
+- Default port 11434.
+- Default model owner `UnionCors`.
+
+## Results
+
+The optimizations made a real difference on my machine (MacBook Pro, M2 Max with a 30-core GPU).
+Qwen3.8-27B Q4_K_P, flash attention, q4_0 KV cache, before (upstream + FastMTP) and after:
+
+| llama-bench | before | after |
+|---|---:|---:|
+| pp512 | 116 t/s | 144 t/s |
+| tg64 | 8.3 t/s | 10.0 t/s |
+| pp512 at 8k depth | 91 t/s | 109 t/s |
+| tg64 at 8k depth | 7.3 t/s | 8.8 t/s |
+
+| batch of tokens (verify step) | before | after |
+|---|---:|---:|
+| 1 token | 88 ms | 70 ms |
+| 2 tokens | 151 ms | 98 ms |
+| 3 tokens | 215 ms | 129 ms |
+| 4 tokens | 192 ms | 148 ms |
+
+With the FastMTP sidecar on a short code prompt at temperature 0, `--spec-draft-n-max 3 --spec-draft-p-min 0.6` gave
+20.3 t/s against 10.5 t/s without a draft (1.93x). The gain depends on the prompt and on how many draft tokens are
+accepted.
+
+Perplexity did not change: 3.4454 before and after on the same text with `-c 1024 --chunks 12`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). llama.cpp is by the ggml authors, the FastMTP patch is by HauhauCS.
