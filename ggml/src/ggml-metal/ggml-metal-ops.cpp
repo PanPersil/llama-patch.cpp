@@ -63,8 +63,10 @@ struct ggml_metal_op {
     }
 
     ~ggml_metal_op() {
-        ggml_metal_encoder_end_encoding(this->enc);
-        ggml_metal_encoder_free(this->enc);
+        if (this->enc) {
+            ggml_metal_encoder_end_encoding(this->enc);
+            ggml_metal_encoder_free(this->enc);
+        }
         ggml_mem_ranges_free(this->mem_ranges);
     }
 
@@ -534,6 +536,28 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx) {
     }
 
     return res;
+}
+
+int ggml_metal_op_encode_single(ggml_metal_op_t ctx, ggml_metal_cmd_buf_t cmd_buf, int idx, void * sample_buf, int i_start, int i_end) {
+    if (ctx->enc) {
+        ggml_metal_encoder_end_encoding(ctx->enc);
+        ggml_metal_encoder_free(ctx->enc);
+    }
+
+    ctx->enc = ggml_metal_encoder_init_sampled(cmd_buf, sample_buf, i_start, i_end);
+    ggml_mem_ranges_reset(ctx->mem_ranges);
+
+    const int res = ggml_metal_op_encode(ctx, idx);
+
+    ggml_metal_encoder_end_encoding(ctx->enc);
+    ggml_metal_encoder_free(ctx->enc);
+    ctx->enc = nullptr;
+
+    return res;
+}
+
+ggml_tensor * ggml_metal_op_node(ggml_metal_op_t ctx, int idx) {
+    return ctx->node(idx);
 }
 
 int ggml_metal_op_concat(ggml_metal_op_t ctx, int idx) {

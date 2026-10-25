@@ -26,6 +26,12 @@ int ggml_metal_op_n_nodes(ggml_metal_op_t ctx);
 
 int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
 
+// profiling: encode node idx alone in a new encoder on cmd_buf, return the number of fused nodes
+// the encoder writes GPU timestamps to samples i_start and i_end of the counter sample buffer
+int ggml_metal_op_encode_single(ggml_metal_op_t ctx, ggml_metal_cmd_buf_t cmd_buf, int idx, void * sample_buf, int i_start, int i_end);
+
+struct ggml_tensor * ggml_metal_op_node(ggml_metal_op_t ctx, int idx);
+
 //
 // available ops:
 //

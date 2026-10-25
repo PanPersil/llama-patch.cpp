@@ -73,6 +73,8 @@ typedef void * ggml_metal_cmd_buf_t;
 typedef struct ggml_metal_encoder * ggml_metal_encoder_t;
 
 ggml_metal_encoder_t ggml_metal_encoder_init(ggml_metal_cmd_buf_t cmd_buf_raw, bool concurrent);
+// profiling: serial encoder that writes GPU timestamps at its start and end into the counter sample buffer
+ggml_metal_encoder_t ggml_metal_encoder_init_sampled(ggml_metal_cmd_buf_t cmd_buf_raw, void * sample_buf, int i_start, int i_end);
 void ggml_metal_encoder_free(ggml_metal_encoder_t encoder);
 
 void ggml_metal_encoder_debug_group_push(ggml_metal_encoder_t encoder, const char * name);
