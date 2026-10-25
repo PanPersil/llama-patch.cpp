@@ -9118,6 +9118,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // k-quant mat-vec and small batches with many blocks per row and an odd row count
+    for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS}) {
+        for (int n : {1, 2, 3, 4, 5, 8}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 67, n, 6*256,  {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 64, n, 20*256, {1, 1}, {1, 1}));
+        }
+    }
+
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_0, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_MXFP4, GGML_TYPE_F32, 2880, 32, 2880, {1, 1}, {1, 1}));

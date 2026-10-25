@@ -8567,6 +8567,15 @@ void kernel_mul_mv_q5_K_f32_impl(
         ushort sgitg) {
     const short NSG = FC_mul_mv_nsg;
 
+    constexpr uint16_t kmask1 = 0x3f3f;
+    constexpr uint16_t kmask2 = 0x0f0f;
+    constexpr uint16_t kmask3 = 0xc0c0;
+
+    const short ix = tiisg/8;  // 0...3
+    const short it = tiisg%8;  // 0...7
+    const short iq = it/4;     // 0 or 1
+    const short ir = it%4;     // 0...3
+
     const int nb = args.ne00/QK_K;
 
     const int r0 = tgpig.x;
@@ -8582,85 +8591,72 @@ void kernel_mul_mv_q5_K_f32_impl(
     const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
 
     device const block_q5_K * x = (device const block_q5_K *) (src0 + offset0);
-    device const float     * yy = (device const float      *) (src1 + offset1);
+    device const float      * y = (device const float      *) (src1 + offset1);
+
+    float4 yl[4];
+    float4 yh[4];
 
     float sumf[nr0]={0.f};
 
-    float yl[16], yh[16];
-
-    constexpr uint16_t kmask1 = 0x3f3f;
-    constexpr uint16_t kmask2 = 0x0f0f;
-    constexpr uint16_t kmask3 = 0xc0c0;
-
-    const short tid = tiisg/4;
-    const short ix  = tiisg%4;
-    const short iq  = tid/4;
-    const short ir  = tid%4;
-
-    const short l0 = 8*ir;
-    const short q_offset = 32*iq + l0;
-    const short y_offset = 64*iq + l0;
-
-    const uint8_t hm1 = 1u << (2*iq);
-    const uint8_t hm2 = hm1 << 1;
-    const uint8_t hm3 = hm1 << 4;
-    const uint8_t hm4 = hm2 << 4;
+    // each thread: 8 consecutive quants in the low and high halves of the 64-quant chunks iq and iq + 2
+    device const float4 * y4 = (device const float4 *) (y + ix * QK_K + 64 * iq + 8 * ir);
 
     uint16_t sc16[4];
     thread const uint8_t * sc8 = (thread const uint8_t *)sc16;
 
-    device const float * y1 = yy + ix*QK_K + y_offset;
+    for (int ib = ix; ib < nb; ib += 4) {
+        yl[0] = y4[ 0]; yl[1] = y4[ 1];
+        yl[2] = y4[ 8]; yl[3] = y4[ 9];
+        yh[0] = y4[32]; yh[1] = y4[33];
+        yh[2] = y4[40]; yh[3] = y4[41];
 
-    for (int i = ix; i < nb; i += 4) {
-        device const uint8_t * q1 = x[i].qs + q_offset;
-        device const uint8_t * qh = x[i].qh + l0;
-        device const half * dh = &x[i].d;
-        device const uint16_t * a = (device const uint16_t *)x[i].scales + iq;
+        const float4 sumy = {
+            dot(yl[0] + yl[1], 1.f),
+            dot(yl[2] + yl[3], 1.f),
+            dot(yh[0] + yh[1], 1.f),
+            dot(yh[2] + yh[3], 1.f),
+        };
 
-        device const float * y2 = y1 + 128;
-        float4 sumy = {0.f, 0.f, 0.f, 0.f};
-        for (short l = 0; l < 8; ++l) {
-            yl[l+0] = y1[l+ 0]; sumy[0] += yl[l+0];
-            yl[l+8] = y1[l+32]; sumy[1] += yl[l+8];
-            yh[l+0] = y2[l+ 0]; sumy[2] += yh[l+0];
-            yh[l+8] = y2[l+32]; sumy[3] += yh[l+8];
-        }
+        device const uint16_t * sc = (device const uint16_t *)x[ib].scales + iq;
+        device const uint32_t * q1 = (device const uint32_t *)(x[ib].qs + 32 * iq + 8 * ir);
+        device const uint32_t * qh = (device const uint32_t *)(x[ib].qh + 8 * ir);
+        device const half     * dh = &x[ib].d;
 
-        for (short row = 0; row < nr0; ++row) {
-            device const uint8_t * q2 = q1 + 64;
+        for (short row = 0; row < nr0; row++) {
+            sc16[0] = sc[0] & kmask1;
+            sc16[1] = sc[2] & kmask1;
+            sc16[2] = ((sc[4] >> 0) & kmask2) | ((sc[0] & kmask3) >> 2);
+            sc16[3] = ((sc[4] >> 4) & kmask2) | ((sc[2] & kmask3) >> 2);
 
-            sc16[0] = a[0] & kmask1;
-            sc16[1] = a[2] & kmask1;
-            sc16[2] = ((a[4] >> 0) & kmask2) | ((a[0] & kmask3) >> 2);
-            sc16[3] = ((a[4] >> 4) & kmask2) | ((a[2] & kmask3) >> 2);
+            float4 acc = 0.f;
 
-            float4 acc1 = {0.f};
-            float4 acc2 = {0.f};
-            FOR_UNROLL (short l = 0; l < 8; ++l) {
-                uint8_t h = qh[l];
-                acc1[0] += yl[l+0] * (q1[l] & 0x0F);
-                acc1[1] += yl[l+8] * (q1[l] & 0xF0);
-                acc1[2] += yh[l+0] * (q2[l] & 0x0F);
-                acc1[3] += yh[l+8] * (q2[l] & 0xF0);
-                acc2[0] += h & hm1 ? yl[l+0] : 0.f;
-                acc2[1] += h & hm2 ? yl[l+8] : 0.f;
-                acc2[2] += h & hm3 ? yh[l+0] : 0.f;
-                acc2[3] += h & hm4 ? yh[l+8] : 0.f;
+            // put the high bit next to the 4 low bits in each byte, then convert 4 quants at once
+            FOR_UNROLL (short k = 0; k < 2; ++k) {
+                const uint32_t a = q1[k];
+                const uint32_t b = q1[k + 16];
+                const uint32_t h = qh[k] >> (2*iq);
+
+                const uint32_t v0 = ( a       & 0x0F0F0F0F) | ((h << 4) & 0x10101010);
+                const uint32_t v1 = ((a >> 4) & 0x0F0F0F0F) | ((h << 3) & 0x10101010);
+                const uint32_t v2 = ( b       & 0x0F0F0F0F) | ( h       & 0x10101010);
+                const uint32_t v3 = ((b >> 4) & 0x0F0F0F0F) | ((h >> 1) & 0x10101010);
+
+                acc[0] += dot(float4(as_type<uchar4>(v0)), yl[k + 0]);
+                acc[1] += dot(float4(as_type<uchar4>(v1)), yl[k + 2]);
+                acc[2] += dot(float4(as_type<uchar4>(v2)), yh[k + 0]);
+                acc[3] += dot(float4(as_type<uchar4>(v3)), yh[k + 2]);
             }
 
-            sumf[row] += dh[0] * (sc8[0] * (acc1[0]      + 16.f*acc2[0]) +
-                                  sc8[1] * (acc1[1]/16.f + 16.f*acc2[1]) +
-                                  sc8[4] * (acc1[2]      + 16.f*acc2[2]) +
-                                  sc8[5] * (acc1[3]/16.f + 16.f*acc2[3])) -
+            sumf[row] += dh[0] * (acc[0] * sc8[0] + acc[1] * sc8[1] + acc[2] * sc8[4] + acc[3] * sc8[5]) -
                          dh[1] * (sumy[0] * sc8[2] + sumy[1] * sc8[3] + sumy[2] * sc8[6] + sumy[3] * sc8[7]);
 
-            q1 += args.nb01;
-            qh += args.nb01;
+            q1 += args.nb01/4;
+            qh += args.nb01/4;
+            sc += args.nb01/2;
             dh += args.nb01/2;
-            a  += args.nb01/2;
         }
 
-        y1 += 4 * QK_K;
+        y4 += QK_K;
     }
 
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
